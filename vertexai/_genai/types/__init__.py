@@ -690,6 +690,9 @@ from .common import MetadataOrDict
 from .common import Metric
 from .common import MetricDict
 from .common import MetricOrDict
+from .common import MetricSource
+from .common import MetricSourceDict
+from .common import MetricSourceOrDict
 from .common import MetricPromptBuilder
 from .common import MetricResult
 from .common import MetricResultDict
@@ -1502,9 +1505,6 @@ __all__ = [
     "RubricBasedMetricInput",
     "RubricBasedMetricInputDict",
     "RubricBasedMetricInputOrDict",
-    "Metric",
-    "MetricDict",
-    "MetricOrDict",
     "MetricResult",
     "MetricResultDict",
     "MetricResultOrDict",
@@ -2150,6 +2150,12 @@ __all__ = [
     "ContentMapContents",
     "ContentMapContentsDict",
     "ContentMapContentsOrDict",
+    "Metric",
+    "MetricDict",
+    "MetricOrDict",
+    "MetricSource",
+    "MetricSourceDict",
+    "MetricSourceOrDict",
     "EvaluateMethodConfig",
     "EvaluateMethodConfigDict",
     "EvaluateMethodConfigOrDict",

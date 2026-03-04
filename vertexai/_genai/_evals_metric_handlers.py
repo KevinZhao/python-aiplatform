@@ -152,9 +152,21 @@ def _default_aggregate_scores(
 class MetricHandler(abc.ABC):
     """Abstract base class for metric handlers."""
 
-    def __init__(self, module: "evals.Evals", metric: types.Metric):
+    def __init__(
+        self,
+        module: "evals.Evals",
+        metric: Union[types.Metric, types.MetricSource],
+    ):
         self.module = module
         self.metric = metric
+        if isinstance(metric, types.MetricSource):
+            self.metric_name = (
+                metric.metric_resource_name
+                if metric.metric_resource_name
+                else (metric.metric.name if metric.metric else "unknown")
+            )
+        else:
+            self.metric_name = metric.name
 
     @abc.abstractmethod
     def get_metric_result(
@@ -190,9 +202,9 @@ class ComputationMetricHandler(MetricHandler):
 
     def __init__(self, module: "evals.Evals", metric: types.Metric):
         super().__init__(module=module, metric=metric)
-        if self.metric.name not in self.SUPPORTED_COMPUTATION_METRICS:
+        if self.metric_name not in self.SUPPORTED_COMPUTATION_METRICS:
             raise ValueError(
-                f"Metric '{self.metric.name}' is not supported for computation."
+                f"Metric '{self.metric_name}' is not supported for computation."
             )
 
     def _build_request_payload(
@@ -226,11 +238,11 @@ class ComputationMetricHandler(MetricHandler):
             )
         logger.debug("eval_case: %s", eval_case)
 
-        if self.metric.name and self.metric.name.startswith("rouge"):
+        if self.metric_name and self.metric_name.startswith("rouge"):
             request_payload["rouge_input"] = {
                 "metric_spec": {
                     "rouge_type": (
-                        "rougeLsum" if self.metric.name == "rouge_l_sum" else "rouge1"
+                        "rougeLsum" if self.metric_name == "rouge_l_sum" else "rouge1"
                     ),
                 },
                 "instances": [
@@ -245,7 +257,7 @@ class ComputationMetricHandler(MetricHandler):
                 ],
             }
         else:
-            request_payload[f"{self.metric.name}_input"] = {
+            request_payload[f"{self.metric_name}_input"] = {
                 "metric_spec": {},
                 "instances": [
                     {
@@ -267,7 +279,7 @@ class ComputationMetricHandler(MetricHandler):
     ) -> types.EvalCaseMetricResult:
         """Processes a single evaluation case for a specific computation metric."""
 
-        metric_name = self.metric.name
+        metric_name = self.metric_name
         logger.debug(
             "ComputationMetricHandler: Processing '%s' for case: %s",
             metric_name,
@@ -295,8 +307,10 @@ class ComputationMetricHandler(MetricHandler):
         self, eval_case_metric_results: list[types.EvalCaseMetricResult]
     ) -> types.AggregatedMetricResult:
         """Aggregates the metric results for a computation metric."""
-        logger.debug("Aggregating results for computation metric: %s", self.metric.name)
-        return _default_aggregate_scores(self.metric.name, eval_case_metric_results)
+        logger.debug(
+            "Aggregating results for computation metric: %s", self.metric_name
+        )
+        return _default_aggregate_scores(self.metric_name, eval_case_metric_results)
 
 
 class TranslationMetricHandler(MetricHandler):
@@ -307,9 +321,9 @@ class TranslationMetricHandler(MetricHandler):
     def __init__(self, module: "evals.Evals", metric: types.Metric):
         super().__init__(module=module, metric=metric)
 
-        if self.metric.name not in self.SUPPORTED_TRANSLATION_METRICS:
+        if self.metric_name not in self.SUPPORTED_TRANSLATION_METRICS:
             raise ValueError(
-                f"Metric '{self.metric.name}' is not supported for translation."
+                f"Metric '{self.metric_name}' is not supported for translation."
             )
 
     def _build_request_payload(
@@ -317,13 +331,13 @@ class TranslationMetricHandler(MetricHandler):
     ) -> dict[str, Any]:
         """Builds the request parameters for evaluate instances."""
         request_payload = {}
-        metric_input_name = f"{self.metric.name}_input"
+        metric_input_name = f"{self.metric_name}_input"
         version = None
         if hasattr(self.metric, "version"):
             version = self.metric.version
-        elif self.metric.name == "comet":
+        elif self.metric_name == "comet":
             version = "COMET_22_SRC_REF"
-        elif self.metric.name == "metricx":
+        elif self.metric_name == "metricx":
             version = "METRICX_24_SRC_REF"
 
         source_language = None
@@ -385,7 +399,7 @@ class TranslationMetricHandler(MetricHandler):
         self, eval_case: types.EvalCase, response_index: int
     ) -> types.EvalCaseMetricResult:
         """Processes a single evaluation case for a specific translation metric."""
-        metric_name = self.metric.name
+        metric_name = self.metric_name
         logger.debug(
             "TranslationMetricHandler: Processing '%s' for case: %s",
             metric_name,
@@ -465,8 +479,10 @@ class TranslationMetricHandler(MetricHandler):
         self, eval_case_metric_results: list[types.EvalCaseMetricResult]
     ) -> types.AggregatedMetricResult:
         """Aggregates the metric results for a translation metric."""
-        logger.debug("Aggregating results for translation metric: %s", self.metric.name)
-        return _default_aggregate_scores(self.metric.name, eval_case_metric_results)
+        logger.debug(
+            "Aggregating results for translation metric: %s", self.metric_name
+        )
+        return _default_aggregate_scores(self.metric_name, eval_case_metric_results)
 
 
 class LLMMetricHandler(MetricHandler):
@@ -664,7 +680,7 @@ class LLMMetricHandler(MetricHandler):
         self, eval_case: types.EvalCase, response_index: int
     ) -> types.EvalCaseMetricResult:
         """Processes a single evaluation case for a specific LLM metric."""
-        metric_name = self.metric.name
+        metric_name = self.metric_name
         try:
             payload = self._build_request_payload(eval_case, response_index)
             response = self.module.evaluate_instances(metric_config=payload)
@@ -703,7 +719,7 @@ class LLMMetricHandler(MetricHandler):
             self.metric.aggregate_summary_fn
         ):
             logger.info(
-                "Using custom aggregate_summary_fn for metric '%s'", self.metric.name
+                "Using custom aggregate_summary_fn for metric '%s'", self.metric_name
             )
             try:
                 custom_summary_dict = self.metric.aggregate_summary_fn(
@@ -729,25 +745,25 @@ class LLMMetricHandler(MetricHandler):
                 final_summary_dict = {**required_fields, **custom_summary_dict}
 
                 return types.AggregatedMetricResult(
-                    metric_name=self.metric.name,
+                    metric_name=self.metric_name,
                     **final_summary_dict,
                 )
             except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.error(
                     "Error executing custom aggregate_summary_fn for metric '%s': %s."
                     " Falling back to default aggregation.",
-                    self.metric.name,
+                    self.metric_name,
                     e,
                     exc_info=True,
                 )
                 return _default_aggregate_scores(
-                    self.metric.name, eval_case_metric_results
+                    self.metric_name, eval_case_metric_results
                 )
         else:
             logger.debug(
-                "Using default aggregation for LLM metric '%s'", self.metric.name
+                "Using default aggregation for LLM metric '%s'", self.metric_name
             )
-            return _default_aggregate_scores(self.metric.name, eval_case_metric_results)
+            return _default_aggregate_scores(self.metric_name, eval_case_metric_results)
 
 
 class CustomMetricHandler(MetricHandler):
@@ -758,12 +774,12 @@ class CustomMetricHandler(MetricHandler):
 
         if not self.metric.custom_function:
             raise ValueError(
-                f"CustomMetricHandler for '{self.metric.name}' needs "
+                f"CustomMetricHandler for '{self.metric_name}' needs "
                 " Metric.custom_function to be set."
             )
         if not isinstance(self.metric.custom_function, Callable):
             raise ValueError(
-                f"CustomMetricHandler for '{self.metric.name}' needs "
+                f"CustomMetricHandler for '{self.metric_name}' needs "
                 " Metric.custom_function to be a callable function."
             )
 
@@ -772,7 +788,7 @@ class CustomMetricHandler(MetricHandler):
         self, eval_case: types.EvalCase, response_index: int
     ) -> types.EvalCaseMetricResult:
         """Processes a single evaluation case for a custom metric."""
-        metric_name = self.metric.name
+        metric_name = self.metric_name
         logger.debug(
             "CustomMetricHandler: Processing '%s' for case: %s",
             metric_name,
@@ -849,18 +865,27 @@ class CustomMetricHandler(MetricHandler):
         self, eval_case_metric_results: list[types.EvalCaseMetricResult]
     ) -> types.AggregatedMetricResult:
         """Aggregates the metric results for a custom metric."""
-        logger.debug("Aggregating results for custom metric: %s", self.metric.name)
-        return _default_aggregate_scores(self.metric.name, eval_case_metric_results)
+        logger.debug("Aggregating results for custom metric: %s", self.metric_name)
+        return _default_aggregate_scores(self.metric_name, eval_case_metric_results)
 
 
 class PredefinedMetricHandler(MetricHandler):
     """Metric handler for predefined metrics."""
 
-    def __init__(self, module: "evals.Evals", metric: types.Metric):
+    def __init__(
+        self,
+        module: "evals.Evals",
+        metric: Union[types.Metric, types.MetricSource],
+    ):
         super().__init__(module=module, metric=metric)
-        if self.metric.name not in _evals_constant.SUPPORTED_PREDEFINED_METRICS:
+        is_registered = (
+            isinstance(metric, types.MetricSource) and metric.metric_resource_name
+        )
+        is_predefined = self.metric_name in _evals_constant.SUPPORTED_PREDEFINED_METRICS
+
+        if not (is_predefined or is_registered):
             raise ValueError(
-                f"Metric '{self.metric.name}' is not a supported predefined metric."
+                f"Metric '{self.metric_name}' is not a supported predefined or registered metric."
             )
 
     @staticmethod
@@ -1021,7 +1046,7 @@ class PredefinedMetricHandler(MetricHandler):
         self, eval_case: types.EvalCase, response_index: int
     ) -> types.EvalCaseMetricResult:
         """Processes a single evaluation case for a specific predefined metric."""
-        metric_name = self.metric.name
+        metric_name = self.metric_name
         try:
             payload = self._build_request_payload(eval_case, response_index)
             for attempt in range(_MAX_RETRIES):
@@ -1100,9 +1125,9 @@ class PredefinedMetricHandler(MetricHandler):
         self, eval_case_metric_results: list[types.EvalCaseMetricResult]
     ) -> types.AggregatedMetricResult:
         """Aggregates the metric results for a predefined metric."""
-        logger.debug("Aggregating results for predefined metric: %s", self.metric.name)
+        logger.debug("Aggregating results for predefined metric: %s", self.metric_name)
         return _default_aggregate_scores(
-            self.metric.name, eval_case_metric_results, calculate_pass_rate=True
+            self.metric_name, eval_case_metric_results, calculate_pass_rate=True
         )
 
 
@@ -1114,7 +1139,7 @@ class CustomCodeExecutionMetricHandler(MetricHandler):
 
         if not self.metric.remote_custom_function:
             raise ValueError(
-                f"CustomCodeExecutionMetricHandler for '{self.metric.name}' needs "
+                f"CustomCodeExecutionMetricHandler for '{self.metric_name}' needs "
                 " Metric.remote_custom_function to be set."
             )
 
@@ -1158,7 +1183,7 @@ class CustomCodeExecutionMetricHandler(MetricHandler):
         self, eval_case: types.EvalCase, response_index: int
     ) -> types.EvalCaseMetricResult:
         """Processes a single evaluation case for a specific custom code execution metric."""
-        metric_name = self.metric.name
+        metric_name = self.metric_name
         try:
             payload = self._build_request_payload(eval_case, response_index)
             for attempt in range(_MAX_RETRIES):
@@ -1235,10 +1260,11 @@ class CustomCodeExecutionMetricHandler(MetricHandler):
     ) -> types.AggregatedMetricResult:
         """Aggregates the metric results for a custom code execution metric."""
         logger.debug(
-            "Aggregating results for custom code execution metric: %s", self.metric.name
+            "Aggregating results for custom code execution metric: %s",
+            self.metric_name,
         )
         return _default_aggregate_scores(
-            self.metric.name, eval_case_metric_results, calculate_pass_rate=True
+            self.metric_name, eval_case_metric_results, calculate_pass_rate=True
         )
 
 
@@ -1278,13 +1304,19 @@ MetricHandlerType = TypeVar(
 
 
 def get_handler_for_metric(
-    module: "evals.Evals", metric: types.Metric
+    module: "evals.Evals", metric_source: Union[types.Metric, types.MetricSource]
 ) -> Union[MetricHandlerType, Any]:
     """Returns a metric handler for the given metric."""
+    if isinstance(metric_source, types.MetricSource):
+        if metric_source.metric_resource_name:
+            return PredefinedMetricHandler(module=module, metric=metric_source)
+        metric = metric_source.metric
+    else:
+        metric = metric_source
     for condition, handler_class in _METRIC_HANDLER_MAPPING:
         if condition(metric):  # type: ignore[no-untyped-call]
             return handler_class(module=module, metric=metric)
-    raise ValueError(f"Unsupported metric: {metric.name}")
+    raise ValueError(f"Unsupported metric: {metric.name}")  # type: ignore[union-attr]
 
 
 def calculate_win_rates(eval_result: types.EvaluationResult) -> dict[str, Any]:
@@ -1344,7 +1376,7 @@ def _aggregate_metric_results(
     aggregated_metric_results = []
     logger.info("Aggregating results per metric...")
     for handler in metric_handlers:
-        metric_name = handler.metric.name
+        metric_name = handler.metric_name
         results_for_this_metric: list[types.EvalCaseMetricResult] = []
         for case_result in eval_case_results:
             if case_result.response_candidate_results:
@@ -1402,7 +1434,7 @@ class EvaluationRunConfig(_common.BaseModel):
     """The module to be used for the evaluation run."""
     dataset: types.EvaluationDataset
     """The dataset to be used for the evaluation run."""
-    metrics: list[types.Metric]
+    metrics: list[Union[types.Metric, types.MetricSource]]
     """The list of metrics to be used for the evaluation run."""
     num_response_candidates: int
     """The number of response candidates for the evaluation run."""
@@ -1473,12 +1505,12 @@ def compute_metrics_and_aggregate(
                                 "response %d for metric %s.",
                                 eval_case_index,
                                 response_index,
-                                metric_handler_instance.metric.name,
+                                metric_handler_instance.metric_name,
                             )
                             all_futures.append(
                                 (
                                     future,
-                                    metric_handler_instance.metric.name,
+                                    metric_handler_instance.metric_name,
                                     eval_case_index,
                                     response_index,
                                 )
@@ -1489,25 +1521,25 @@ def compute_metrics_and_aggregate(
                                 "response %d for metric %s: %s",
                                 eval_case_index,
                                 response_index,
-                                metric_handler_instance.metric.name,
+                                metric_handler_instance.metric_name,
                                 e,
                                 exc_info=True,
                             )
                             submission_errors.append(
                                 (
-                                    metric_handler_instance.metric.name,
+                                    metric_handler_instance.metric_name,
                                     eval_case_index,
                                     response_index,
                                     f"Error: {e}",
                                 )
                             )
                             error_result = types.EvalCaseMetricResult(
-                                metric_name=metric_handler_instance.metric.name,
+                                metric_name=metric_handler_instance.metric_name,
                                 error_message=f"Submission Error: {e}",
                             )
                             results_by_case_response_metric[eval_case_index][
                                 response_index
-                            ][metric_handler_instance.metric.name] = error_result
+                            ][metric_handler_instance.metric_name] = error_result
                             case_indices_with_errors.add(eval_case_index)
                             pbar.update(1)
 
